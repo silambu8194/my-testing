@@ -11,6 +11,10 @@ import gzip
 import io
 from utils.httpx_client import get_httpx_client
 
+import ssl, certifi, requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
 
 from sqlalchemy import create_engine, Column, Integer, String, Float , Sequence, Index
 from sqlalchemy.orm import scoped_session, sessionmaker
@@ -131,8 +135,54 @@ def download_csv_aliceblue_data(output_path):
         "BFO": "https://v2api.aliceblueonline.com/restpy/static/contract_master/BFO.csv",
         "BCD": "https://v2api.aliceblueonline.com/restpy/static/contract_master/BCD.csv",
         "MCX": "https://v2api.aliceblueonline.com/restpy/static/contract_master/MCX.csv",
-        "INDICES": "https://v2api.aliceblueonline.com/restpy/static/contract_master/INDICES.csv"
+        "INDICES": "https://v2api.aliceblueonline.com/restpy/static/contract_master/INDICES.csv",  
+
     }
+
+   
+
+def download_with_retry(url, save_path, retries=5):
+    """
+    Download file with max 5 retries.
+    Works for SSL errors like: DECRYPTION_FAILED_OR_BAD_RECORD_MAC
+    """
+
+    for attempt in range(1, retries + 1):
+        try:
+            # New SSL context every attempt (prevents Kotak TLS bug)
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "OpenAlgoBot/1.0",
+                    "Connection": "close",      # Force HTTP/1.1
+                    "Accept-Encoding": "identity"
+                }
+            )
+
+            with urllib.request.urlopen(req, timeout=20, context=ssl_ctx) as response:
+                data = response.read()
+
+            # Write only after full download
+            with open(save_path, "wb") as f:
+                f.write(data)
+
+            print(f"[INFO] Successfully downloaded: {url}")
+            return True
+
+        except Exception as e:
+            print(f"[WARN] Attempt {attempt}/{retries} failed for {url}: {e}")
+
+            if attempt == retries:
+                print(f"[ERROR] Max retry reached. Giving up on {url}")
+                return False
+
+            # Back-off wait
+            time.sleep(attempt * 1.5)
+
     
     # Get the shared httpx client with connection pooling
     client = get_httpx_client()
